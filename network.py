@@ -154,7 +154,7 @@ class BPNeuralNetwork:
             delta = [self.__clip_by_norm(k * self.__learning_rate / self.__batch_size) for k in delta]
             bias_delta = [self.__clip_by_norm(k * self.__learning_rate / self.__batch_size) for k in bias_delta]
         elif self.__how_clip == 'global':
-            delta = self.__clip_by_global_norm([k * self.__learning_rate / self.__batch_sizefor for k in delta])
+            delta = self.__clip_by_global_norm([k * self.__learning_rate / self.__batch_size for k in delta])
             bias_delta = self.__clip_by_global_norm([k * self.__learning_rate / self.__batch_size for k in bias_delta])
         elif self.__how_clip is None or True:
             delta = [k * self.__learning_rate / self.__batch_size for k in delta]
