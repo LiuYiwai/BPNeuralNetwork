@@ -1,3 +1,6 @@
+import copy
+import random
+
 import numpy as np
 import math
 
@@ -5,9 +8,12 @@ from sklearn import model_selection
 
 
 class BPNeuralNetwork:
-    def __init__(self, solver='sgd', activation='ReLU', learning_rate=1e-3,
-                 clip_gradient=5, how_clip='none', is_print=False,
-                 goal=1e-4, tol=1e-4, alpha=1e-4, max_iter=200,
+    def __init__(self, solver='bgd', activation='ReLU',
+                 init_method='normal', normalize=False,
+                 learning_rate=1e-3, momentum=None,
+                 clip_gradient=5, how_clip=None, is_print=False,
+                 goal=1e-4, tol=1e-4, alpha=1e-4, max_iter=500,
+                 batch_size=32,
                  hidden_layer_sizes=(100,)):
         """
         :param solver: 权重优化的求解器
@@ -30,14 +36,39 @@ class BPNeuralNetwork:
             self.__layer_number = hidden_layer_sizes
         self.__solver = solver
         self.__activation = activation
+        self.__batch_size = batch_size
+        self.__init_method = init_method
         self.__learning_rate = learning_rate
         self.__max_iter = max_iter
         self.__goal = goal
         self.__tol = tol
         self.__alpha = alpha
+        self.____normalize = normalize
+        self.__momentum = momentum
         self.__clip_gradient = clip_gradient
         self.__how_clip = how_clip
         self.__is_print = is_print
+
+    def __init_layer_and_next_size(self):
+        self.__layer_and_next_size = [(self.__layer_number[0], self.__input_size)]
+        self.__layer_and_next_size.extend(
+            [(self.__layer_number[i + 1], self.__layer_number[i]) for i in range(0, self.__layer_size - 1)])
+        self.__layer_and_next_size.append((self.__output_size, self.__layer_number[self.__layer_size - 1]))
+
+    def __init_weight_layer(self, layer_size):
+        if self.__init_method == 'Xavier':
+            scale = np.sqrt(6. / (layer_size[0] + layer_size[1]))
+        elif self.__init_method == 'MSRA':
+            scale = np.sqrt(2. / layer_size[1])
+        elif self.__init_method == 'normal' or True:
+            scale = 1
+        if self.__init_method == 'Xavier':
+            return np.random.uniform(-scale, scale, size=layer_size)
+        elif self.__init_method == 'MSRA':
+            return np.random.normal(0, scale, size=layer_size)
+        elif self.__init_method == 'normal' or True:
+            return np.random.normal(0, scale, size=layer_size)
+            # return np.random.uniform(-scale, scale, size=layer_size)
 
     def __init_weight(self, inp, oup):
         """
@@ -45,133 +76,130 @@ class BPNeuralNetwork:
         :param oup: 输出
         :return: None
         """
-        # 初始化参数
         self.__input_size = inp.shape[1]
         self.__output_size = oup.shape[1]
-        self.__weight = list()
-        scale = np.sqrt(2 / self.__input_size)
-        layer = np.random.normal(0, scale, size=(self.__input_size, self.__layer_number[0]))
-        self.__weight.append(layer)
-        for i in range(0, self.__layer_size - 1):
-            scale = np.sqrt(2 / self.__layer_number[i])
-            layer = np.random.normal(0, scale, size=(self.__layer_number[i], self.__layer_number[i + 1]))
-            self.__weight.append(layer)
-        scale = np.sqrt(2 / self.__layer_number[self.__layer_size - 1])
-        layer = np.random.normal(0, scale, size=(self.__layer_number[self.__layer_size - 1], self.__output_size))
-        self.__weight.append(layer)
-        # 初始化偏置权值的参数
-        self.__bias_weight = list()
-        scale = np.sqrt(2 / 1)
-        for i in range(0, self.__layer_size):
-            layer = np.random.normal(0, scale, size=(1, self.__layer_number[i]))
-            self.__bias_weight.append(layer)
-        layer = np.random.normal(0, scale, size=(1, self.__output_size))
-        self.__bias_weight.append(layer)
-
-    def __clip_by_norm(self, delta):
-        t = sum([x * x for x in delta.tolist()[0]])
-        return delta * (self.__clip_gradient / max(t, self.__clip_gradient))
-
-    def __clip_by_global_norm(self, delta):
-        t = 0
-        for x in delta:
-            t += sum(y * y for y in x.tolist()[0])
-        if self.__clip_gradient > t:
-            return delta
-        else:
-            scale = self.__clip_gradient / t
-            return [scale * x for x in delta]
-
-    def __train_update_bias(self, theta):
-        """
-        :param theta: 本次迭代中每层的误差
-        :return: None
-        """
-        bias_theta = list()
-        if self.__how_clip == 'global':
-            bias_theta = self.__clip_by_global_norm(
-                [np.multiply(x, y) * self.__learning_rate for x, y in zip(theta, self.__bias_weight)])
-        elif self.__how_clip == 'normal':
-            bias_theta = [self.__clip_by_norm(np.multiply(x, y) * self.__learning_rate) for x, y in
-                          zip(theta, self.__bias_weight)]
-        elif self.__how_clip == 'none':
-            bias_theta = [np.multiply(x, y) * self.__learning_rate for x, y in zip(theta, self.__bias_weight)]
-        for delta, idx in zip(bias_theta, range(0, self.__layer_size + 1)):
-            self.__bias_weight[idx] = self.__bias_weight[idx] + delta
-
-    def __train_get_theta(self, net, o, t):
-        """
-        :param net: 每层神经元的输入和
-        :param o: 每层神经元经过激活的结果
-        :param t: 目标输出
-        :return: 迭代中每层误差
-        """
-        theta = [t - net[-1]]  # 因为最后一层是线性层
-        for w, ou in zip(reversed(self.__weight[1:]), reversed(o[:-1])):
-            if self.__activation == 'sigmoid':
-                theta.append(np.multiply(np.dot(theta[-1], w.T),
-                                         np.multiply(ou, 1 - ou)))
-            elif self.__activation == 'ReLU':
-                theta.append(np.multiply(np.dot(theta[-1], w.T),
-                                         np.array([1 if x > 0 else 0 for x in ou.tolist()[0]])))
-        theta.reverse()
-        return theta
+        self.__init_layer_and_next_size()
+        self.__weight = [self.__init_weight_layer(size) for size in self.__layer_and_next_size]
+        self.__bias_weight = [np.random.normal(0, 1, size=(size[0], 1)) for size in self.__layer_and_next_size]
+        # self.__bias_weight = [self.__init_weight_layer(size=(size[0], 1)) for size in self.__layer_and_next_size]
 
     def __train_get_ans(self, x):
         """
         前向传播得到预测结果
         :param x: 输入
-        :return: net 神经元的输入和
+        :return: last_net 最后一层神经元的输入和
                 o 神经元经过激活后的结果
                 a 神经元之间的传递
         """
-        net, o, a = list(), list(), list()
-        if len(x.shape) == 1:
-            x = x.reshape(1, x.shape[0])
+        x = np.array([x]).reshape(x.shape[0], 1)
+        final_net, o, a = None, list(), list()
         for weight, bias in zip(self.__weight, self.__bias_weight):
-            a.append(np.multiply(x.T, weight))
-            x = np.dot(x, weight)
-            x = np.add(x, bias)  # 加上偏置
-            net.append(x)
-            if self.__activation == 'sigmoid':
-                x = self.__get_sigmoid(x)
-            elif self.__activation == 'ReLU':
-                x = self.__get_ReLU(x)
+            a.append(np.multiply(weight, x.T))
+            x = np.add(np.dot(weight, x), bias)
+            final_net = x
+            x = self.__activate(copy.deepcopy(x))
             o.append(x)
-        return net, o, a
+        return final_net, o, a
 
-    def __train_sgd(self, inp, oup, test_inp, test_oup):
+    def __train_get_theta(self, final_net, o, t):
         """
-        随机梯度下降
+         :param final_net: 最后一层神经元的输入和
+         :param o: 每层神经元经过激活的结果
+         :param t: 目标输出
+         :return: 迭代中每层误差
+         """
+        t = np.array([t]).reshape(t.shape[0], 1)
+        theta = [t - final_net]  # 因为最后一层是线性层
+        for w, ou in zip(reversed(self.__weight[1:]), reversed(o[:-1])):
+            if self.__activation == 'ReLU':
+                ou[ou > 0] = 1
+                ou[ou <= 0] = 0
+                theta.append(np.multiply(np.dot(w.T, theta[-1]), ou))
+            elif self.__activation == 'sigmoid':
+                theta.append(np.multiply(np.dot(w.T, theta[-1]),
+                                         np.multiply(ou, 1 - ou)))
+        theta.reverse()
+        return theta
+
+    def __train_get_bias_delta(self, theta):
+        """
+        :param theta: 本次迭代中每层的误差
+        :return: None
+        """
+        return [np.multiply(x, y) for x, y in zip(theta, self.__bias_weight)]
+
+    @staticmethod
+    def __train_get_delta(theta, a):
+        return [np.multiply(x, y) for x, y in zip(theta, a)]
+
+    def __clip_by_norm(self, delta):
+        t = sum([x * x for x in delta[0]])
+        if t < self.__clip_gradient:
+            return delta
+        else:
+            return delta * (self.__clip_gradient / t)
+
+    def __clip_by_global_norm(self, delta):
+        t = 0
+        for x in delta:
+            t += sum(y * y for y in x[0])
+        if t < self.__clip_gradient:
+            return delta
+        else:
+            scale = self.__clip_gradient / t
+            return [scale * x for x in delta]
+
+    def __get_clip_gradient(self, delta, bias_delta):
+        if self.__how_clip == 'normal':
+            delta = [self.__clip_by_norm(k * self.__learning_rate / self.__batch_size) for k in delta]
+            bias_delta = [self.__clip_by_norm(k * self.__learning_rate / self.__batch_size) for k in bias_delta]
+        elif self.__how_clip == 'global':
+            delta = self.__clip_by_global_norm([k * self.__learning_rate / self.__batch_sizefor for k in delta])
+            bias_delta = self.__clip_by_global_norm([k * self.__learning_rate / self.__batch_size for k in bias_delta])
+        elif self.__how_clip is None or True:
+            delta = [k * self.__learning_rate / self.__batch_size for k in delta]
+            bias_delta = [k * self.__learning_rate / self.__batch_size for k in bias_delta]
+        return delta, bias_delta
+
+    def __train_bgd(self, inp, oup, test_inp, test_oup):
+        """
+        批梯度下降
         :param inp: 输入
         :param oup: 目标输出
         :param test_inp: 测试输入
         :param test_oup: 测试目标输出
         :return: None
         """
-        last_error, error, iter = 110, 100, -1
-        while (last_error - error > self.__tol or error > self.__goal) and iter < self.__max_iter:
+        error_difference, last_error, error, iter = 10, 110, 100, -1
+        regularization_corr = self.__learning_rate * self.__alpha / self.__batch_size
+        last_bias_delta = [np.zeros((size[0], 1)) for size in self.__layer_and_next_size]
+        last_delta = [np.zeros(size) for size in self.__layer_and_next_size]
+        self.__max_iter = len(inp) * self.__max_iter / self.__batch_size
+        while ((error > self.__goal) or (error < self.__goal and error_difference > self.__tol)) \
+                and iter < self.__max_iter:
             iter = iter + 1
-            for i, j in zip(inp, oup):
-                net, o, a = self.__train_get_ans(i)
-                theta = self.__train_get_theta(net, o, j)
-                self.__train_update_bias(theta)
-                delta = list()
-                if self.__how_clip is None:
-                    delta = [np.multiply(x, y) * self.__learning_rate for x, y in zip(theta, a)]
-                elif self.__how_clip == 'global':
-                    delta = self.__clip_by_global_norm(
-                        [np.multiply(x, y) * self.__learning_rate for x, y in zip(theta, a)])
-                elif self.__how_clip == 'normal':
-                    delta = [self.__clip_by_norm(np.multiply(x, y) * self.__learning_rate) for x, y in
-                             zip(theta, a)]
-                for delta_w, idx in zip(delta, range(0, self.__layer_size + 1)):
-                    self.__weight[idx] = self.__weight[idx] \
-                                         + delta_w \
-                                         - self.__learning_rate * self.__alpha * self.__weight[idx]
+            delta = [np.zeros(size) for size in self.__layer_and_next_size]
+            bias_delta = [np.zeros((size[0], 1)) for size in self.__layer_and_next_size]
+            for index in np.random.choice(range(len(inp)), size=self.__batch_size, replace=False):
+                i = inp[index]
+                j = oup[index]
+                final_net, o, a = self.__train_get_ans(i.T)
+                theta = self.__train_get_theta(final_net, o, j)
+                delta = [x + y for x, y in zip(delta, self.__train_get_delta(theta, a))]
+                bias_delta = [x + y for x, y in zip(bias_delta, self.__train_get_bias_delta(theta))]
+            if self.__momentum is not None:
+                delta = [x + self.__momentum * y for x, y in zip(delta, last_delta)]
+                bias_delta = [x + self.__momentum * y for x, y in zip(bias_delta, last_bias_delta)]
+            delta, bias_delta = self.__get_clip_gradient(delta, bias_delta)
+            for delta_w, bias_delta_w, idx in zip(delta, bias_delta, range(0, self.__layer_size + 1)):
+                last_delta[idx] = delta_w - regularization_corr * self.__weight[idx]
+                last_bias_delta[idx] = bias_delta_w - regularization_corr * self.__bias_weight[idx]
+                self.__weight[idx] = self.__weight[idx] + last_delta[idx]
+                self.__bias_weight[idx] = self.__bias_weight[idx] + last_bias_delta[idx]
+
             last_error = error
             error = self.__get_error(test_inp, test_oup)
-
+            error_difference = error - last_error
             if self.__is_print:
                 print('iter: ', iter)
                 print('error: ', error)
@@ -179,6 +207,15 @@ class BPNeuralNetwork:
     def __get_error(self, test_inp, test_oup):
         predict = self.__train_predict(test_inp)
         return ((predict - test_oup) ** 2).sum() / 2.
+        # return ((predict - test_oup) ** 2).sum() / len(test_oup)
+
+    def __train_predict(self, x):
+        """
+        用于计算error的预测函数，不需要归一化回去
+        :param x: 输入
+        :return: 预测结果
+        """
+        return np.array([self.__get_ans(k.T) for k in x])
 
     @staticmethod
     def __get_sigmoid(net):
@@ -187,12 +224,12 @@ class BPNeuralNetwork:
         """
         return 1. / (1. + np.exp(-net))
         # ret = list()
-        # for k in net.tolist()[0]:
+        # for k in net[0]:
         #     try:
         #         item = 1. / (1. + math.exp(-k))
         #     except OverflowError:
         #         item = 0
-        #     ret.append(item)
+        #     ret.append(copy.deepcopy(item))
         # return ret
 
     @staticmethod
@@ -203,61 +240,49 @@ class BPNeuralNetwork:
         net[net < 0] = 0
         return net
 
+    def __activate(self, x):
+        if self.__activation == 'ReLU':
+            x = self.__get_ReLU(x)
+        elif self.__activation == 'sigmoid':
+            x = self.__get_sigmoid(x)
+        return x
+
     def __get_ans(self, inp):
         """
         预测结果
         :param inp: 输入
         :return: 输出结果
         """
+        inp = np.array([inp]).reshape(inp.shape[0], 1)
         for weight, bias in zip(self.__weight, self.__bias_weight):
-            net = np.dot(inp, weight)
-            net = np.add(net, bias)
-            if self.__activation == 'sigmoid':
-                inp = self.__get_sigmoid(net)
-            elif self.__activation == 'ReLU':
-                inp = self.__get_ReLU(net)
-        return net.tolist()[0]
-
-    def __train_predict(self, x):
-        """
-        用于计算error的预测函数，不需要归一化回去
-        :param x: 输入
-        :return: 预测结果
-        """
-        return np.array([self.__get_ans(k) for k in x])
+            net = np.add(np.dot(weight, inp), bias)
+            inp = self.__activate(copy.deepcopy(net))
+        return net.T[0]
 
     def __normalize_x(self, x):
         """
         归一化数据
         :param x: input
-        :param y: output
         :return: Normalized x
         """
-
-        if len(x.shape) == 1:
-            x = x.reshape(x.shape[0], 1)
         self.__x_dimension = x.shape[1]
-        self.__x_max = [x[:, index].max() for index in range(0, self.__x_dimension)]
-        self.__x_min = [x[:, index].min() for index in range(0, self.__x_dimension)]
-        for index in range(0, self.__x_dimension):
-            x[:, index] = (x[:, index] - self.__x_min[index]) / (self.__x_max[index] - self.__x_min[index])
+        self.__x_max = [x[:, i].max() for i in range(0, self.__x_dimension)]
+        self.__x_min = [x[:, i].min() for i in range(0, self.__x_dimension)]
+        for i in range(0, self.__x_dimension):
+            x[:, i] = (x[:, i] - self.__x_min[i]) / (self.__x_max[i] - self.__x_min[i])
         return x
 
     def __normalize_y(self, y):
         """
         归一化数据
-        :param x: input
         :param y: output
         :return: Normalized y
         """
-
-        if len(y.shape) == 1:
-            y = y.reshape(y.shape[0], 1)
         self.__y_dimension = y.shape[1]
-        self.__y_max = [y[:, index].max() for index in range(0, self.__y_dimension)]
-        self.__y_min = [y[:, index].min() for index in range(0, self.__y_dimension)]
-        for index in range(0, self.__y_dimension):
-            y[:, index] = (y[:, index] - self.__y_min[index]) / (self.__y_max[index] - self.__y_min[index])
+        self.__y_max = [y[:, i].max() for i in range(0, self.__y_dimension)]
+        self.__y_min = [y[:, i].min() for i in range(0, self.__y_dimension)]
+        for i in range(0, self.__y_dimension):
+            y[:, i] = (y[:, i] - self.__y_min[i]) / (self.__y_max[i] - self.__y_min[i])
         return y
 
     def fit(self, x, y):
@@ -267,12 +292,20 @@ class BPNeuralNetwork:
         :param y: output
         :return: None
         """
-
-        x, y = self.__normalize_x(x), self.__normalize_y(y)
+        if len(x.shape) == 1:
+            x = x.reshape(y.shape[0], 1)
+        if len(y.shape) == 1:
+            y = y.reshape(y.shape[0], 1)
+        if self.____normalize:
+            x, y = self.__normalize_x(x), self.__normalize_y(y)
         self.__init_weight(x, y)
         X_train, X_test, y_train, y_test = model_selection.train_test_split(x, y, test_size=0.1, random_state=1)
-        if self.__solver == 'sgd':
-            self.__train_sgd(X_train, y_train, X_test, y_test)
+        self.__batch_size = min(self.__batch_size, len(X_train))
+        if self.__solver == 'bgd':
+            self.__train_bgd(X_train, y_train, X_test, y_test)
+        else:
+            print('no solver')
+            return
 
     def predict(self, x):
         """
@@ -280,11 +313,15 @@ class BPNeuralNetwork:
         :param x: input
         :return: result
         """
-
-        x = self.__normalize_x(x)
-        y = np.array([self.__get_ans(k) for k in x])
-        for index in range(0, self.__y_dimension):
-            y[:, index] = y[:, index] * (self.__y_max[index] - self.__y_min[index]) + self.__y_min[index]
-        if self.__y_dimension == 1:
+        if len(x.shape) == 1:
+            x = x.reshape(x.shape[0], 1)
+        if self.____normalize:
+            for i in range(0, self.__x_dimension):
+                x[:, i] = (x[:, i] - self.__x_min[i]) / (self.__x_max[i] - self.__x_min[i])
+        y = np.array([self.__get_ans(k.T) for k in x])
+        if self.____normalize:
+            for i in range(0, self.__y_dimension):
+                y[:, i] = y[:, i] * (self.__y_max[i] - self.__y_min[i]) + self.__y_min[i]
+        if y.shape[1] == 1:
             y = y.reshape(y.shape[0])
         return y
