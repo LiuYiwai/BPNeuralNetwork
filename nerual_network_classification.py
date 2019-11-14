@@ -2,26 +2,21 @@ from nerual_network import *
 
 
 class BPNeuralNetworkClassification(BPNeuralNetwork):
-    def _train_get_theta(self, final_net, o, t):
-        """
-         :param final_net: 最后一层神经元的输入和
-         :param o: 每层神经元经过激活的结果
-         :param t: 目标输出
-         :return: 迭代中每层误差
-         """
-        t = np.array([t]).reshape(t.shape[0], 1)
-        out = self.__get_sigmoid(final_net)
-        theta = [np.multiply(t - out, np.multiply(out, 1 - out))]
-        for w, ou in zip(reversed(self._weight[1:]), reversed(o[:-1])):
-            if self._activation == 'ReLU':
-                ou[ou > 0] = 1
-                ou[ou <= 0] = 0
-                theta.append(np.multiply(np.dot(w.T, theta[-1]), ou))
-            elif self._activation == 'sigmoid':
-                theta.append(np.multiply(np.dot(w.T, theta[-1]),
-                                         np.multiply(ou, 1 - ou)))
-        theta.reverse()
-        return theta
+
+    def __init__(self, solver='mbgd', activation='ReLU',
+                 init_method='normal', normalize=False,
+                 learning_rate=1e-3, momentum=None,
+                 clip_gradient=5, how_clip=None, is_print=False,
+                 goal=1e-4, tol=1e-4, alpha=1e-4, max_iter=500,
+                 batch_size=32,
+                 hidden_layer_sizes=(100,)):
+        super().__init__(solver=solver, activation=activation,
+                         init_method=init_method, normalize=normalize,
+                         learning_rate=learning_rate, momentum=momentum,
+                         clip_gradient=clip_gradient, how_clip=how_clip,
+                         is_print=is_print, goal=goal, tol=tol, alpha=alpha,
+                         max_iter=max_iter, batch_size=batch_size,
+                         hidden_layer_sizes=hidden_layer_sizes, is_classification=True)
 
     def _get_ans(self, inp):
         """
