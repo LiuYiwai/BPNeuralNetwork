@@ -1,6 +1,9 @@
 # BPNeuralNetwork
 My first neural network exercise
 
+2019/12/03 Update:
+  修复bug，整理了一下文件，完成作业之后把多余的东西删除了。
+
 2019/11/14 Update:
   参考sklearn源代码重写了梯度下降，现在可以一起计算同一批的梯度了，运行速度以及准确度得到提高。
 
